@@ -117,6 +117,12 @@ func (sm *SealManager) SetSeal(ctx context.Context, sealConfig *SealConfig, ns *
 	sm.lock.Lock()
 	defer sm.lock.Unlock()
 
+	// Check if we're already present; if so, don't set any seal information
+	// as we don't want to overwrite what we have.
+	if _, ok := sm.sealByNamespace[ns.UUID]; ok {
+		return nil
+	}
+
 	if err := sealConfig.Validate(); err != nil {
 		return fmt.Errorf("invalid seal configuration: %w", err)
 	}
@@ -128,9 +134,14 @@ func (sm *SealManager) SetSeal(ctx context.Context, sealConfig *SealConfig, ns *
 	defaultSeal.SetCore(sm.core)
 	defaultSeal.SetMetaPrefix(metaPrefix)
 
-	// At this point, the namespace's barrier is still the parent's barrier,
-	// hence we can just query that without computing the actual parent.
-	defaultSeal.SetConfigAccess(sm.namespaceBarrierByLongestPrefix(ns.Path))
+	// The configuration access should always at least use the parent's seal
+	// configuration information.
+	parent, ok := ns.ParentPath()
+	if !ok {
+		return fmt.Errorf("cannot seal the root namespace via this approach")
+	}
+	parentBarrier := sm.namespaceBarrierByLongestPrefix(parent)
+	defaultSeal.SetConfigAccess(parentBarrier)
 
 	ctx = namespace.ContextWithNamespace(ctx, ns)
 	if err := defaultSeal.Init(ctx); err != nil {
